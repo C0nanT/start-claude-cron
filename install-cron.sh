@@ -18,7 +18,9 @@ current_crontab="$(crontab -l 2>/dev/null || true)"
 existing_project_lines="$(printf '%s\n' "$current_crontab" | grep -F "$ASK_CLAUDE" || true)"
 if [ -n "$existing_project_lines" ]; then
   echo "Encontrei entrada(s) existentes no seu crontab referenciando este script:"
-  echo "$existing_project_lines" | sed 's/^/  /'
+  while IFS= read -r existing_line; do
+    echo "  $existing_line"
+  done <<< "$existing_project_lines"
   echo "Este script NÃO remove nem altera entradas existentes — só adiciona as que faltam. Revise manualmente se quiser evitar duplicidade."
   echo
 fi

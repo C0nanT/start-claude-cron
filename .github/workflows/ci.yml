@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check bash syntax
+        run: |
+          for f in ask-claude.sh install-cron.sh tests/*.sh; do
+            bash -n "$f"
+          done
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: '.'
+          ignore_paths: '.scratch'
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ask-claude.sh tests
+        run: ./tests/test-ask-claude.sh
+      - name: Run install-cron.sh tests
+        run: ./tests/test-install-cron.sh
