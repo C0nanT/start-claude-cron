@@ -52,6 +52,16 @@ Usamos lista de minutos (2 linhas) em vez de 12 entradas explícitas — mesmo e
 
 Timezone do sistema: `America/Sao_Paulo` — sem conversão UTC necessária.
 
+### Instalando em um PC novo
+
+```bash
+./install-cron.sh
+```
+
+O script só **adiciona** as 2 linhas acima ao seu crontab — não remove nem altera nada que já exista, e roda de novo sem duplicar (pula linhas já presentes).
+
+**Atenção:** se você já rodou este projeto antes nesse PC (crontab antigo com horários fixos, por exemplo), remova essas entradas antigas manualmente com `crontab -e` antes de rodar o script, para não acabar com execuções duplicadas.
+
 ## Ver logs
 
 ```bash
