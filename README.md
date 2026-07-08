@@ -44,11 +44,10 @@ Se qualquer um dos dois estiver dentro da janela, o script pula a chamada, loga 
 ## Cron jobs
 
 ```
-0,10,20,30,40,50 8  * * *  /path/to/ask-claude.sh >> claude-cron.log 2>&1
-0,10,20,30,40,50 23 * * *  /path/to/ask-claude.sh >> claude-cron.log 2>&1
+30 5,10,15,20 * * *  /path/to/ask-claude.sh >> claude-cron.log 2>&1
 ```
 
-Usamos lista de minutos (2 linhas) em vez de 12 entradas explícitas — mesmo efeito, menos repetição para manter.
+Roda às 05:30, 10:30, 15:30 e 20:30. Usamos lista de horas (1 linha) em vez de 4 entradas explícitas — mesmo efeito, menos repetição para manter.
 
 Timezone do sistema: `America/Sao_Paulo` — sem conversão UTC necessária.
 

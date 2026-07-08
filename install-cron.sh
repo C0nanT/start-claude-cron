@@ -6,11 +6,10 @@ ASK_CLAUDE="$SCRIPT_DIR/ask-claude.sh"
 LOG_FILE="$SCRIPT_DIR/claude-cron.log"
 
 NEW_LINES=(
-  "0,10,20,30,40,50 8 * * * $ASK_CLAUDE >> $LOG_FILE 2>&1"
-  "0,10,20,30,40,50 23 * * * $ASK_CLAUDE >> $LOG_FILE 2>&1"
+  "30 5,10,15,20 * * * $ASK_CLAUDE >> $LOG_FILE 2>&1"
 )
 
-echo "Aviso: se você já rodou este projeto antes neste PC e tem entradas antigas de ask-claude.sh no crontab (ex: horários fixos como 08:00/23:00/23:30), remova-as manualmente com 'crontab -e' antes de continuar, para evitar execuções duplicadas."
+echo "Aviso: se você já rodou este projeto antes neste PC e tem entradas antigas de ask-claude.sh no crontab (ex: horários fixos como 08:00/23:00/23:30 ou os antigos 0,10,20,30,40,50 8/23h), remova-as manualmente com 'crontab -e' antes de continuar, para evitar execuções duplicadas."
 echo
 
 current_crontab="$(crontab -l 2>/dev/null || true)"

@@ -25,8 +25,7 @@ fi
 EOF
 chmod +x "$WORK_DIR/crontab"
 
-LINE_08="0,10,20,30,40,50 8 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
-LINE_23="0,10,20,30,40,50 23 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
+LINE_NEW="30 5,10,15,20 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
 
 failures=0
 
@@ -68,19 +67,17 @@ run_install() {
   PATH="$WORK_DIR:$PATH" "$INSTALL_CRON"
 }
 
-echo "=== 1) crontab vazio -> deve adicionar as 2 linhas ==="
+echo "=== 1) crontab vazio -> deve adicionar a linha nova ==="
 : > "$FAKE_STORE"
 run_install > /dev/null
 result="$(cat "$FAKE_STORE")"
-assert_contains "$result" "$LINE_08" "linha das 8h adicionada"
-assert_contains "$result" "$LINE_23" "linha das 23h adicionada"
+assert_contains "$result" "$LINE_NEW" "linha nova (5,10,15,20h30) adicionada"
 
 echo
 echo "=== 2) roda de novo -> não deve duplicar ==="
 run_install > /dev/null
 result="$(cat "$FAKE_STORE")"
-assert_count "$result" "$LINE_08" "1" "linha das 8h aparece só 1 vez"
-assert_count "$result" "$LINE_23" "1" "linha das 23h aparece só 1 vez"
+assert_count "$result" "$LINE_NEW" "1" "linha nova aparece só 1 vez"
 
 echo
 echo "=== 3) crontab com entradas antigas do projeto + job não relacionado -> preserva tudo, só adiciona as novas ==="
@@ -91,8 +88,7 @@ run_install > /dev/null
 result="$(cat "$FAKE_STORE")"
 assert_contains "$result" "$OLD_LINE_1" "entrada antiga do projeto permanece intacta"
 assert_contains "$result" "$UNRELATED_LINE" "job não relacionado permanece intacto"
-assert_contains "$result" "$LINE_08" "linha nova das 8h foi adicionada"
-assert_contains "$result" "$LINE_23" "linha nova das 23h foi adicionada"
+assert_contains "$result" "$LINE_NEW" "linha nova foi adicionada"
 
 echo
 if [ "$failures" -gt 0 ]; then
