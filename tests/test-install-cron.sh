@@ -25,8 +25,8 @@ fi
 EOF
 chmod +x "$WORK_DIR/crontab"
 
-LINE_NEW="*/5 5-21 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
-LINE_CUSTOM="*/10 6-22 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
+LINE_NEW="30 5,10,15,20 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
+LINE_CUSTOM="15 6,12,18 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
 
 failures=0
 
@@ -72,7 +72,7 @@ echo "=== 1) crontab vazio -> deve adicionar a linha nova ==="
 : > "$FAKE_STORE"
 run_install > /dev/null
 result="$(cat "$FAKE_STORE")"
-assert_contains "$result" "$LINE_NEW" "linha nova (*/5 5-21h, default) adicionada"
+assert_contains "$result" "$LINE_NEW" "linha nova (30 5,10,15,20h, default) adicionada"
 
 echo
 echo "=== 2) roda de novo -> não deve duplicar ==="
@@ -92,11 +92,29 @@ assert_contains "$result" "$UNRELATED_LINE" "job não relacionado permanece inta
 assert_contains "$result" "$LINE_NEW" "linha nova foi adicionada"
 
 echo
-echo "=== 4) CRON_START_HOUR/CRON_END_HOUR/CRON_INTERVAL_MINUTES customizados via env -> gera linha customizada ==="
+echo "=== 4) CRON_START_HOUR/CRON_START_MINUTE/CRON_END_HOUR/SESSION_WINDOW_MINUTES customizados via env -> gera ticks customizados ==="
 : > "$FAKE_STORE"
-run_install env CRON_START_HOUR=6 CRON_END_HOUR=22 CRON_INTERVAL_MINUTES=10 > /dev/null
+run_install env CRON_START_HOUR=6 CRON_START_MINUTE=15 CRON_END_HOUR=20 SESSION_WINDOW_MINUTES=360 > /dev/null
 result="$(cat "$FAKE_STORE")"
-assert_contains "$result" "$LINE_CUSTOM" "linha respeita CRON_START_HOUR/CRON_END_HOUR/CRON_INTERVAL_MINUTES"
+assert_contains "$result" "$LINE_CUSTOM" "linha respeita CRON_START_HOUR/CRON_START_MINUTE/CRON_END_HOUR/SESSION_WINDOW_MINUTES (passo de 6h)"
+
+echo
+echo "=== 5) SESSION_WINDOW_MINUTES não múltiplo de 60 -> erro, não instala nada ==="
+: > "$FAKE_STORE"
+set +e
+error_output="$(run_install env SESSION_WINDOW_MINUTES=90 2>&1)"
+exit_code=$?
+set -e
+assert_eq_code() {
+  if [ "$1" != "$2" ]; then
+    echo "FAIL: esperava exit code $2, achou $1"
+    failures=$((failures + 1))
+  else
+    echo "PASS: sai com erro (exit $2) quando SESSION_WINDOW_MINUTES não é múltiplo de 60"
+  fi
+}
+assert_eq_code "$exit_code" "1"
+assert_contains "$error_output" "múltiplo de 60" "mensagem de erro explica a causa"
 
 echo
 if [ "$failures" -gt 0 ]; then
