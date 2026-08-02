@@ -49,44 +49,49 @@ run_ask_claude() {
 echo "=== 1) sem marker, sem activity file -> deve chamar o claude ==="
 rm -f "$MARKER_FILE" "$FAKE_ACTIVITY"
 output="$(run_ask_claude)"
-assert_contains "$output" "sessão iniciada, marker atualizado" "chama claude quando não há marker nem atividade"
+assert_contains "$output" "sessão iniciada (script), expira às" "chama claude quando não há marker nem atividade"
 if [ -f "$MARKER_FILE" ]; then
   echo "PASS: marker foi criado"
+  read -r m_start m_origin < "$MARKER_FILE"
+  assert_eq "$m_origin" "script" "marker gravado com origem script"
 else
   echo "FAIL: marker não foi criado"
   failures=$((failures + 1))
 fi
 
 echo
-echo "=== 2) marker antigo (fora da janela), atividade recente -> pula como usuário ==="
-date -d '400 minutes ago' +%s > "$MARKER_FILE"
-touch -d '5 minutes ago' "$FAKE_ACTIVITY"
-expected_epoch="$(stat -c %Y "$FAKE_ACTIVITY")"
+echo "=== 2) marker (script) ainda dentro da janela -> pula e NÃO desliza o início ==="
+marker_epoch="$(date -d '60 minutes ago' +%s)"
+printf '%s script\n' "$marker_epoch" > "$MARKER_FILE"
+touch -d '1 minute ago' "$FAKE_ACTIVITY"
 output="$(run_ask_claude)"
-assert_contains "$output" "sessão já ativa (usuário)" "pula e loga origem usuário"
-assert_eq "$(cat "$MARKER_FILE")" "$expected_epoch" "marker atualizado com epoch da atividade do usuário"
+assert_contains "$output" "sessão ativa (script), expira às" "pula e loga origem + horário de expiração"
+read -r m_start_after _ < "$MARKER_FILE"
+assert_eq "$m_start_after" "$marker_epoch" "início da janela permanece fixo (não desliza com atividade nova)"
 
 echo
-echo "=== 3) marker recente (script), atividade antiga -> pula como script ==="
-date -d '5 minutes ago' +%s > "$MARKER_FILE"
-touch -d '200 minutes ago' "$FAKE_ACTIVITY"
+echo "=== 3) marker expirado, atividade do usuário recente -> adota início do usuário ==="
+printf '%s script\n' "$(date -d '400 minutes ago' +%s)" > "$MARKER_FILE"
+touch -d '10 minutes ago' "$FAKE_ACTIVITY"
+expected_epoch="$(stat -c %Y "$FAKE_ACTIVITY" 2>/dev/null || stat -f %m "$FAKE_ACTIVITY")"
 output="$(run_ask_claude)"
-assert_contains "$output" "sessão já ativa (script)" "pula e loga origem script"
+assert_contains "$output" "sessão do usuário detectada, expira às" "pula e loga origem usuário"
+read -r m_start_after m_origin_after < "$MARKER_FILE"
+assert_eq "$m_start_after" "$expected_epoch" "marker adota epoch da atividade do usuário"
+assert_eq "$m_origin_after" "usuário" "marker registra origem usuário"
 
 echo
 echo "=== 4) marker e atividade fora da janela -> deve chamar o claude de novo ==="
-date -d '400 minutes ago' +%s > "$MARKER_FILE"
+printf '%s script\n' "$(date -d '400 minutes ago' +%s)" > "$MARKER_FILE"
 touch -d '400 minutes ago' "$FAKE_ACTIVITY"
 output="$(run_ask_claude)"
-assert_contains "$output" "sessão iniciada, marker atualizado" "chama claude de novo quando ambos os sinais expiraram"
+assert_contains "$output" "sessão iniciada (script), expira às" "chama claude de novo quando ambos os sinais expiraram"
 
 echo
 echo "=== 5) feature flag desativada, marker recente -> deve chamar o claude mesmo assim ==="
-date -d '5 minutes ago' +%s > "$MARKER_FILE"
+printf '%s script\n' "$(date -d '5 minutes ago' +%s)" > "$MARKER_FILE"
 output="$(run_ask_claude env ENABLE_SESSION_SKIP=false)"
-assert_contains "$output" "sessão iniciada, marker atualizado" "ENABLE_SESSION_SKIP=false ignora o marker"
-
-rm -f "$MARKER_FILE"
+assert_contains "$output" "sessão iniciada (script), expira às" "ENABLE_SESSION_SKIP=false ignora o marker"
 
 echo
 echo "=== 6) claude falha -> loga erro, sai 1, não atualiza marker ==="
@@ -113,7 +118,7 @@ fi
 
 echo
 echo "=== 7) resposta do claude não vaza pro stdout do script ==="
-rm -f "$MARKER_FILE"
+rm -f "$MARKER_FILE" "$FAKE_ACTIVITY"
 output="$(run_ask_claude)"
 if [[ "$output" == *"fake claude called"* ]]; then
   echo "FAIL: resposta do claude vazou pro log"

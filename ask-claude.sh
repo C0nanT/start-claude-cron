@@ -17,13 +17,13 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# stat portátil: GNU (Linux/WSL) usa -c, BSD/macOS usa -f
+# stat/date portáteis: GNU (Linux/WSL) usa -c/-d, BSD/macOS usa -f/-r
 get_mtime_epoch() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
-get_marker_epoch() {
-  [ -f "$MARKER_FILE" ] && cat "$MARKER_FILE" 2>/dev/null || echo 0
+fmt_hm() {
+  date -d "@$1" '+%H:%M' 2>/dev/null || date -r "$1" '+%H:%M'
 }
 
 get_activity_epoch() {
@@ -44,26 +44,38 @@ rotate_log_if_needed() {
 
 rotate_log_if_needed
 
-if [ "$ENABLE_SESSION_SKIP" = "true" ]; then
-  marker_ts="$(get_marker_epoch)"
-  activity_ts="$(get_activity_epoch)"
+window_sec=$(( SESSION_WINDOW_MINUTES * 60 ))
+now_epoch="$(date +%s)"
 
-  latest_ts="$marker_ts"
-  session_origin="script"
-  if [ "$activity_ts" -gt "$marker_ts" ]; then
-    latest_ts="$activity_ts"
-    session_origin="usuário"
+if [ "$ENABLE_SESSION_SKIP" = "true" ]; then
+  # marker guarda o INÍCIO fixo da janela atual ("<epoch> <origem>"), não a
+  # última atividade vista — senão cada mensagem nova empurra o fim da janela
+  # pra frente e o script nunca mais dispara.
+  marker_start=0
+  marker_origin="none"
+  if [ -f "$MARKER_FILE" ]; then
+    read -r marker_start marker_origin < "$MARKER_FILE" || true
+    marker_start="${marker_start:-0}"
+    marker_origin="${marker_origin:-script}"
   fi
 
-  if [ "$latest_ts" -gt 0 ]; then
-    now_epoch="$(date +%s)"
-    age_minutes=$(( (now_epoch - latest_ts) / 60 ))
+  if [ "$marker_start" -gt 0 ] && [ $(( now_epoch - marker_start )) -lt "$window_sec" ]; then
+    end_ts=$(( marker_start + window_sec ))
+    remaining=$(( (end_ts - now_epoch) / 60 ))
+    log "sessão ativa ($marker_origin), expira às $(fmt_hm "$end_ts") (faltam ${remaining}min)"
+    exit 0
+  fi
 
-    if [ "$age_minutes" -lt "$SESSION_WINDOW_MINUTES" ]; then
-      log "sessão já ativa ($session_origin), iniciada às $(date -d "@$latest_ts" '+%H:%M'), pulando (idade: ${age_minutes}min < ${SESSION_WINDOW_MINUTES}min)"
-      echo "$latest_ts" > "$MARKER_FILE"
-      exit 0
-    fi
+  # marker inexistente ou expirado: janela do usuário pode já ter recomeçado
+  # sem o script perceber (só sabemos a ÚLTIMA mensagem, não a primeira) —
+  # se a última atividade ainda está dentro da janela, adota esse início.
+  activity_ts="$(get_activity_epoch)"
+  if [ "$activity_ts" -gt 0 ] && [ $(( now_epoch - activity_ts )) -lt "$window_sec" ]; then
+    end_ts=$(( activity_ts + window_sec ))
+    remaining=$(( (end_ts - now_epoch) / 60 ))
+    printf '%s %s\n' "$activity_ts" "usuário" > "$MARKER_FILE"
+    log "sessão do usuário detectada, expira às $(fmt_hm "$end_ts") (faltam ${remaining}min)"
+    exit 0
   fi
 fi
 
@@ -76,5 +88,7 @@ if ! "$CLAUDE_BIN" \
   exit 1
 fi
 
-date +%s > "$MARKER_FILE"
-log "sessão iniciada, marker atualizado"
+now_epoch="$(date +%s)"
+end_ts=$(( now_epoch + window_sec ))
+printf '%s %s\n' "$now_epoch" "script" > "$MARKER_FILE"
+log "sessão iniciada (script), expira às $(fmt_hm "$end_ts")"

@@ -25,7 +25,8 @@ fi
 EOF
 chmod +x "$WORK_DIR/crontab"
 
-LINE_NEW="30 5,10,15,20 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
+LINE_NEW="*/5 5-21 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
+LINE_CUSTOM="*/10 6-22 * * * $ASK_CLAUDE >> $PROJECT_DIR/claude-cron.log 2>&1"
 
 failures=0
 
@@ -64,14 +65,14 @@ assert_count() {
 }
 
 run_install() {
-  PATH="$WORK_DIR:$PATH" "$INSTALL_CRON"
+  PATH="$WORK_DIR:$PATH" "$@" "$INSTALL_CRON"
 }
 
 echo "=== 1) crontab vazio -> deve adicionar a linha nova ==="
 : > "$FAKE_STORE"
 run_install > /dev/null
 result="$(cat "$FAKE_STORE")"
-assert_contains "$result" "$LINE_NEW" "linha nova (5,10,15,20h30) adicionada"
+assert_contains "$result" "$LINE_NEW" "linha nova (*/5 5-21h, default) adicionada"
 
 echo
 echo "=== 2) roda de novo -> não deve duplicar ==="
@@ -89,6 +90,13 @@ result="$(cat "$FAKE_STORE")"
 assert_contains "$result" "$OLD_LINE_1" "entrada antiga do projeto permanece intacta"
 assert_contains "$result" "$UNRELATED_LINE" "job não relacionado permanece intacto"
 assert_contains "$result" "$LINE_NEW" "linha nova foi adicionada"
+
+echo
+echo "=== 4) CRON_START_HOUR/CRON_END_HOUR/CRON_INTERVAL_MINUTES customizados via env -> gera linha customizada ==="
+: > "$FAKE_STORE"
+run_install env CRON_START_HOUR=6 CRON_END_HOUR=22 CRON_INTERVAL_MINUTES=10 > /dev/null
+result="$(cat "$FAKE_STORE")"
+assert_contains "$result" "$LINE_CUSTOM" "linha respeita CRON_START_HOUR/CRON_END_HOUR/CRON_INTERVAL_MINUTES"
 
 echo
 if [ "$failures" -gt 0 ]; then
