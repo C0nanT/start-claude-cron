@@ -89,6 +89,42 @@ assert_contains "$output" "sessão iniciada, marker atualizado" "ENABLE_SESSION_
 rm -f "$MARKER_FILE"
 
 echo
+echo "=== 6) claude falha -> loga erro, sai 1, não atualiza marker ==="
+rm -f "$MARKER_FILE"
+FAILING_CLAUDE="$WORK_DIR/failing-claude"
+cat > "$FAILING_CLAUDE" <<'EOF'
+#!/usr/bin/env bash
+echo "resposta que nao deveria vazar pro log" >&2
+exit 1
+EOF
+chmod +x "$FAILING_CLAUDE"
+set +e
+output="$(CLAUDE_BIN="$FAILING_CLAUDE" CLAUDE_ACTIVITY_FILE="$FAKE_ACTIVITY" "$ASK_CLAUDE" 2>&1)"
+exit_code=$?
+set -e
+assert_eq "$exit_code" "1" "sai com status 1 quando claude falha"
+assert_contains "$output" "ERRO: chamada ao claude falhou" "loga erro explícito"
+if [ -f "$MARKER_FILE" ]; then
+  echo "FAIL: marker não deveria ter sido criado após falha"
+  failures=$((failures + 1))
+else
+  echo "PASS: marker não foi criado após falha"
+fi
+
+echo
+echo "=== 7) resposta do claude não vaza pro stdout do script ==="
+rm -f "$MARKER_FILE"
+output="$(run_ask_claude)"
+if [[ "$output" == *"fake claude called"* ]]; then
+  echo "FAIL: resposta do claude vazou pro log"
+  failures=$((failures + 1))
+else
+  echo "PASS: resposta do claude não aparece no log"
+fi
+
+rm -f "$MARKER_FILE"
+
+echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures teste(s) falharam"
   exit 1

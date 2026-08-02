@@ -10,9 +10,16 @@ ENABLE_SESSION_SKIP="${ENABLE_SESSION_SKIP:-true}"
 SESSION_WINDOW_MINUTES="${SESSION_WINDOW_MINUTES:-300}"
 MARKER_FILE="$SCRIPT_DIR/.session-marker"
 CLAUDE_ACTIVITY_FILE="${CLAUDE_ACTIVITY_FILE:-$HOME/.claude/history.jsonl}"
+LOG_MAX_BYTES="${LOG_MAX_BYTES:-1048576}"
+LOG_FILE="$SCRIPT_DIR/claude-cron.log"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# stat portátil: GNU (Linux/WSL) usa -c, BSD/macOS usa -f
+get_mtime_epoch() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
 get_marker_epoch() {
@@ -20,8 +27,22 @@ get_marker_epoch() {
 }
 
 get_activity_epoch() {
-  [ -f "$CLAUDE_ACTIVITY_FILE" ] && stat -c %Y "$CLAUDE_ACTIVITY_FILE" 2>/dev/null || echo 0
+  [ -f "$CLAUDE_ACTIVITY_FILE" ] && get_mtime_epoch "$CLAUDE_ACTIVITY_FILE" || echo 0
 }
+
+rotate_log_if_needed() {
+  [ -f "$LOG_FILE" ] || return 0
+  local size
+  size="$(stat -c %s "$LOG_FILE" 2>/dev/null || stat -f %z "$LOG_FILE" 2>/dev/null || echo 0)"
+  if [ "$size" -gt "$LOG_MAX_BYTES" ]; then
+    # copytruncate, não mv: o cron já tem "$LOG_FILE" aberto via >>, então
+    # trocar o inode faria as próximas escritas irem pro arquivo antigo renomeado
+    cp "$LOG_FILE" "$LOG_FILE.1"
+    : > "$LOG_FILE"
+  fi
+}
+
+rotate_log_if_needed
 
 if [ "$ENABLE_SESSION_SKIP" = "true" ]; then
   marker_ts="$(get_marker_epoch)"
@@ -46,11 +67,14 @@ if [ "$ENABLE_SESSION_SKIP" = "true" ]; then
   fi
 fi
 
-"$CLAUDE_BIN" \
+if ! "$CLAUDE_BIN" \
   --model claude-haiku-4-5-20251001 \
   --effort low \
   --print \
-  "que dia é hoje?"
+  "que dia é hoje?" > /dev/null; then
+  log "ERRO: chamada ao claude falhou, marker não atualizado"
+  exit 1
+fi
 
 date +%s > "$MARKER_FILE"
 log "sessão iniciada, marker atualizado"
