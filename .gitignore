@@ -1,4 +1,3 @@
 claude-cron.log
 .env
-.session-marker
-
+sessions.db

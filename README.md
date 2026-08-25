@@ -8,48 +8,63 @@ O Claude Code possui um limite de uso de 5 horas por janela. Esse limite reseta 
 
 O objetivo desse script é **fixar o horário de reset** disparando uma mensagem leve (modelo Haiku, effort mínimo) em horários estratégicos, garantindo que o contador sempre inicie no mesmo ponto do dia.
 
-## Horários configurados
+## Horários
 
-O cron dispara em ticks fixos, espaçados pela duração da janela (`SESSION_WINDOW_MINUTES`, default 300min = 5h), começando em `CRON_START_HOUR:CRON_START_MINUTE` e sem passar de `CRON_END_HOUR`. Com os defaults (5h30, passo de 5h, até 21h): **05:30, 10:30, 15:30, 20:30**. Fora dessa faixa (madrugada) não roda — intencional. Tudo configurável via `.env` (veja `.env.example`); nada fica hardcoded no código.
+Ticks base (início de cada janela de 5h): **05:30, 10:30, 15:30, 20:30**.
 
-Cada tick tenta iniciar a sessão. Se já houver uma ativa, o **próprio script** (não o cron) fica tentando de novo a cada `RETRY_INTERVAL_MINUTES` (default 5min), até `MAX_RETRIES` tentativas (default 12, cobrindo ~55min) — pensado pro caso de a sessão ativa estar quase no fim: em vez de perder essa janela e só tentar de novo daqui 5h (próximo tick), o script insiste por perto de 1h antes de desistir e devolver o controle pro próximo tick.
+Como a janela real pode terminar alguns minutos depois do tick (ex.: sessão iniciada às 05:32 só acaba às 10:32), cada tick tem retentativas com intervalos de **10, 10, 5, 5, 10, 10 minutos**:
 
-Isso significa que uma execução do cron pode ficar rodando (dormindo) por até ~55min quando pega uma sessão ativa que não termina a tempo — inofensivo, já que o próximo tick real só vem 5h depois.
+```
+05:30  05:40  05:50  05:55  06:00  06:10  06:20
+10:30  10:40  10:50  10:55  11:00  11:10  11:20
+15:30  15:40  15:50  15:55  16:00  16:10  16:20
+20:30  20:40  20:50  20:55  21:00  21:10  21:20
+```
+
+Se nenhuma das tentativas conseguir abrir a sessão, desiste até o próximo tick base.
+
+## Como funciona
+
+O cron **sempre** dispara nos horários acima. Quem decide se vale chamar o Claude é o script:
+
+1. Consulta o sqlite (`sessions.db`) pelo `end_epoch` da última sessão registrada.
+2. Se essa sessão ainda está dentro da janela, loga `sessão ativa até HH:MM (faltam Xmin), pulando` e **sai sem chamar o Claude** — retentativa não gasta token.
+3. Se já acabou (ou não existe sessão), chama o Claude, grava `start_epoch`/`end_epoch` no sqlite e loga `sessão iniciada às HH:MM, expira às HH:MM`.
+
+A chamada usa `--print` (não-interativo), modelo `claude-haiku-4-5-20251001`, `--effort low` e a pergunta `"que dia é hoje?"` — o mínimo pra abrir a sessão. A resposta é descartada.
+
+`SESSION_GRACE_SECONDS` (default 120) trata a sessão como encerrada um pouco antes do fim exato, porque o cron dispara em `:30:01` enquanto a sessão anterior começou em `:30:06` — sem essa folga o tick base sempre perderia a janela por poucos segundos.
 
 ## Arquivos
 
 ```
 ask-claude.sh       # Script principal
-install-cron.sh     # Gera/instala a linha do crontab a partir do .env
-.session-marker     # Marker com o início fixo da janela atual + origem (gerado automaticamente, git-ignored)
-claude-cron.log     # Output das execuções (gerado automaticamente)
+install-cron.sh     # Instala as linhas do crontab
+sessions.db         # Histórico de sessões em sqlite (gerado automaticamente, git-ignored)
+claude-cron.log     # Output das execuções (gerado automaticamente, git-ignored)
 ```
 
-## Como funciona
+## Esquema do sqlite
 
-`ask-claude.sh` roda o Claude Code em modo não-interativo (`--print`) com:
-- Modelo: `claude-haiku-4-5-20251001` (mais leve e barato)
-- Effort: `low` (mínimo processamento)
-- Pergunta: `"que dia é hoje?"` (token mínimo, só pra iniciar sessão)
+```sql
+CREATE TABLE sessions(
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  start_epoch INTEGER NOT NULL,
+  end_epoch   INTEGER NOT NULL
+);
+```
 
-## Skip de sessão ativa + retry
+Consultar o histórico:
 
-`.session-marker` guarda o **início fixo** da janela atual de 5h, no formato `<epoch> <origem>` (origem = `script` ou `usuário`). É fixo — não é reescrito a cada checagem — porque se ele deslizasse pra frente toda vez que houvesse atividade nova, o fim da janela nunca chegaria enquanto o uso continuasse, e a janela de 5h real do Claude Code (que conta a partir da primeira mensagem, não da última) sairia de sincronia sem o script perceber.
-
-Em cada tentativa (a 1ª do tick, ou uma das retries):
-
-1. Se o marker existe e ainda está dentro da janela (`SESSION_WINDOW_MINUTES`, default 300min): loga a origem e o horário de expiração (`sessão ativa (origem), expira às HH:MM (faltam Xmin)`), **sem alterar o marker** — sessão considerada ativa.
-2. Senão, verifica `CLAUDE_ACTIVITY_FILE` (mtime, default `~/.claude/history.jsonl`). Se essa atividade ainda está dentro da janela, o script conclui que o usuário já iniciou uma sessão nova por conta própria, adota esse horário como início (`sessão do usuário detectada, expira às HH:MM`) e grava o marker — aproximação sujeita a alguns minutos de erro, já que só sabemos a **última** mensagem vista, não a primeira — sessão considerada ativa.
-3. Se nenhum dos dois sinais está dentro da janela: chama o Claude de verdade, e o novo início (exato, porque foi o próprio script quem disparou) vira o marker. Fim da execução (sucesso).
-
-Se o passo 3 não foi alcançado (sessão ainda ativa) e ainda restam tentativas (`MAX_RETRIES`, default 12), o script loga `tentativa N/MAX_RETRIES sem sucesso, tentando de novo em RETRY_INTERVAL_MINUTESmin`, dorme esse intervalo e repete do passo 1. Ao esgotar as tentativas, loga `sessão ainda ativa após N tentativa(s), desistindo até o próximo ciclo do cron` e sai — sem chamar o Claude.
-
-Esse comportamento é controlado pela feature flag `ENABLE_SESSION_SKIP` (default `true`) — defina como `false` para sempre chamar o Claude direto, ignorando marker e retries. Veja `.env.example` para todas as variáveis.
+```bash
+python3 -c "import sqlite3,datetime as d; [print(d.datetime.fromtimestamp(s), '->', d.datetime.fromtimestamp(e)) for s,e in sqlite3.connect('sessions.db').execute('SELECT start_epoch,end_epoch FROM sessions ORDER BY id')]"
+```
 
 ## Cron jobs
 
 ```
-30 5,10,15,20 * * *  /path/to/ask-claude.sh >> claude-cron.log 2>&1
+30,40,50,55 5,10,15,20 * * * /path/to/ask-claude.sh >> claude-cron.log 2>&1
+0,10,20     6,11,16,21 * * * /path/to/ask-claude.sh >> claude-cron.log 2>&1
 ```
 
 Timezone do sistema: `America/Sao_Paulo` — sem conversão UTC necessária.
@@ -60,9 +75,11 @@ Timezone do sistema: `America/Sao_Paulo` — sem conversão UTC necessária.
 ./install-cron.sh
 ```
 
-O `install-cron.sh` lê `CRON_START_HOUR`/`CRON_START_MINUTE`/`CRON_END_HOUR`/`SESSION_WINDOW_MINUTES` do `.env` (ou usa os defaults 5/30/21/300) e monta a linha do crontab a partir deles — nada fica fixo no código. Ele só **adiciona** essa linha — não remove nem altera nada que já exista, e roda de novo sem duplicar (pula linhas já presentes). `SESSION_WINDOW_MINUTES` precisa ser múltiplo de 60 pra virar um passo de horas inteiras entre os ticks.
+Remove qualquer entrada antiga de `ask-claude.sh` no crontab e instala as duas linhas acima. Entradas não relacionadas são preservadas, e rodar de novo não duplica nada.
 
-**Atenção:** se você já rodou este projeto antes nesse PC (crontab antigo com horários fixos, ou no formato `*/5 5-21 * * *` de uma versão anterior que rodava a cada 5min o dia todo), remova essas entradas antigas manualmente com `crontab -e` antes de rodar o script, para não acabar com execuções duplicadas.
+## Configuração
+
+Copie `.env.example` para `.env` e ajuste o que precisar (`CLAUDE_BIN`, `CLAUDE_MODEL`, `SESSION_WINDOW_MINUTES`, `SESSION_GRACE_SECONDS`, `DB_FILE`).
 
 ## Ver logs
 
@@ -70,6 +87,4 @@ O `install-cron.sh` lê `CRON_START_HOUR`/`CRON_START_MINUTE`/`CRON_END_HOUR`/`S
 tail -f claude-cron.log
 ```
 
-`claude-cron.log` contém só as linhas operacionais do script (`sessão iniciada`, `sessão já ativa`, `ERRO: ...`) — a resposta do Claude à pergunta `"que dia é hoje?"` é descartada, não polui o log. Quando o log passa de `LOG_MAX_BYTES` (default 1MB), o script rotaciona automaticamente para `claude-cron.log.1` (um único backup, sobrescrito a cada rotação).
-
-Se a chamada ao Claude falhar (auth, rede, etc.), o script loga `ERRO: chamada ao claude falhou, marker não atualizado` e sai com status 1 — o marker não é atualizado, então a próxima execução tenta de novo.
+Se a chamada ao Claude falhar (auth, rede, etc.), o script loga `ERRO: chamada ao claude falhou, sessão não registrada` e sai com status 1 — nada é gravado no sqlite, então a próxima tentativa repete.
